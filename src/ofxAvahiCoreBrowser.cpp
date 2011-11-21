@@ -8,6 +8,7 @@
 #include "ofxAvahiCoreBrowser.h"
 #include "ofLog.h"
 #include "ofUtils.h"
+#include "ofAppRunner.h"
 
 string ofxAvahiCoreBrowser::LOG_NAME="ofxAvahiCoreBrowser";
 
@@ -24,9 +25,10 @@ ofxAvahiCoreBrowser::~ofxAvahiCoreBrowser() {
 	close();
 }
 
-bool ofxAvahiCoreBrowser::lookup(string type){
+bool ofxAvahiCoreBrowser::lookup(string _type){
 	AvahiServerConfig config;
 	int error;
+	type = _type;
 
 	if (!(poll = avahi_simple_poll_new())) {
 		ofLogError(LOG_NAME) << "Failed to create simple poll object.";
@@ -39,13 +41,16 @@ bool ofxAvahiCoreBrowser::lookup(string type){
 	config.publish_addresses = 0;
 	config.publish_workstation = 0;
 	config.publish_domain = 0;
+	config.use_ipv6 = 0;
+	config.disallow_other_stacks = 1;
+	config.allow_point_to_point = 1;
 
 	/* Set a unicast DNS server for wide area DNS-SD */
     /*avahi_address_parse("192.168.50.1", AVAHI_PROTO_UNSPEC, &config.wide_area_servers[0]);
     config.n_wide_area_servers = 1;
     config.enable_wide_area = 1;*/
 
-	server = avahi_server_new(avahi_simple_poll_get(poll), &config, NULL, NULL, &error);
+	server = avahi_server_new(avahi_simple_poll_get(poll), &config, (AvahiServerCallback)server_cb, this, &error);
 
 	avahi_server_config_free(&config);
 
@@ -55,11 +60,12 @@ bool ofxAvahiCoreBrowser::lookup(string type){
 		return false;
 	}
 
+
     /* Create the service browser */
     if (!(sb = avahi_s_service_browser_new(server, AVAHI_IF_UNSPEC, AVAHI_PROTO_INET, type.c_str(), NULL, (AvahiLookupFlags)0, (AvahiSServiceBrowserCallback)browse_cb, this))) {
     	ofLogError(LOG_NAME) << "Failed to create service browser:" << avahi_strerror(avahi_server_errno(server));
     	close();
-        return false;
+    	return false;
     }
 
 	startThread(true,false);
@@ -68,10 +74,21 @@ bool ofxAvahiCoreBrowser::lookup(string type){
 }
 
 void ofxAvahiCoreBrowser::threadedFunction(){
-	avahi_simple_poll_loop(poll);
+	if(avahi_simple_poll_loop(poll)){
+		ofLogError(LOG_NAME) << "error in poll loop";
+	}else{
+		ofLogVerbose(LOG_NAME) << "poll loop finished";
+	}
 }
 
 void ofxAvahiCoreBrowser::close(){
+	ofLogVerbose(LOG_NAME) << "closing";
+
+    if (poll){
+        avahi_simple_poll_quit(poll);
+        waitForThread(false);
+    }
+
 	if (sb)
 		avahi_s_service_browser_free(sb);
 
@@ -82,6 +99,33 @@ void ofxAvahiCoreBrowser::close(){
         avahi_simple_poll_free(poll);
 }
 
+void ofxAvahiCoreBrowser::server_cb (AvahiServer *s, AvahiServerState state, ofxAvahiCoreBrowser* browser){
+	switch(state){
+	case AVAHI_SERVER_INVALID:          /**< Invalid state (initial) */
+		ofLogError(LOG_NAME) << "server state changed to invalid";
+        browser->close();
+		break;
+	case AVAHI_SERVER_REGISTERING:      /**< Host RRs are being registered */
+		ofLogNotice(LOG_NAME) << "server state changed to registering";
+		break;
+	case AVAHI_SERVER_RUNNING:          /**< All host RRs have been established */
+		ofLogNotice(LOG_NAME) << "server state changed to running";
+	    /* Create the service browser */
+	    /*if (!(browser->sb = avahi_s_service_browser_new(s, AVAHI_IF_UNSPEC, AVAHI_PROTO_INET, browser->type.c_str(), NULL, (AvahiLookupFlags)0, (AvahiSServiceBrowserCallback)browse_cb, browser))) {
+	    	ofLogError(LOG_NAME) << "Failed to create service browser:" << avahi_strerror(avahi_server_errno(s));
+	    	browser->close();
+	    }*/
+		break;
+	case AVAHI_SERVER_COLLISION:        /**< There is a collision with a host RR. All host RRs have been withdrawn, the user should set a new host name via avahi_server_set_host_name() */
+		ofLogNotice(LOG_NAME) << "server state changed to collision";
+		break;
+	case AVAHI_SERVER_FAILURE:          /**< Some fatal failure happened, the server is unable to proceed */
+		ofLogError(LOG_NAME) << "server state changed to failure";
+        browser->close();
+		break;
+	}
+}
+
 void ofxAvahiCoreBrowser::browse_cb(
     AvahiSServiceBrowser *b,
     AvahiIfIndex interface,
@@ -90,7 +134,7 @@ void ofxAvahiCoreBrowser::browse_cb(
     const char *name,
     const char *type,
     const char *domain,
-    AVAHI_GCC_UNUSED AvahiLookupResultFlags flags,
+    AvahiLookupResultFlags flags,
     ofxAvahiCoreBrowser* browser) {
 
     AvahiServer *s = browser->server;
@@ -101,9 +145,8 @@ void ofxAvahiCoreBrowser::browse_cb(
     switch (event) {
 
         case AVAHI_BROWSER_FAILURE:
-
         	ofLogError(LOG_NAME) <<  "(Browser)" << avahi_strerror(avahi_server_errno(browser->server));
-            avahi_simple_poll_quit(browser->poll);
+            browser->close();
             return;
 
         case AVAHI_BROWSER_NEW:
@@ -136,8 +179,8 @@ void ofxAvahiCoreBrowser::browse_cb(
 
 void ofxAvahiCoreBrowser::resolve_cb(
     AvahiSServiceResolver *r,
-    AVAHI_GCC_UNUSED AvahiIfIndex interface,
-    AVAHI_GCC_UNUSED AvahiProtocol protocol,
+    AvahiIfIndex interface,
+    AvahiProtocol protocol,
     AvahiResolverEvent event,
     const char *name,
     const char *type,
@@ -147,7 +190,7 @@ void ofxAvahiCoreBrowser::resolve_cb(
     uint16_t port,
     AvahiStringList *txt,
     AvahiLookupResultFlags flags,
-    AVAHI_GCC_UNUSED ofxAvahiCoreBrowser* browser) {
+    ofxAvahiCoreBrowser* browser) {
 
     assert(r);
 

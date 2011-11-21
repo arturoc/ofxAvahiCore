@@ -48,6 +48,7 @@ private:
 	AvahiSServiceBrowser *sb;
 	AvahiSimplePoll * poll;
 	AvahiServer *server;
+	string type;
 
 	static void browse_cb(
 		    AvahiSServiceBrowser *b,
@@ -57,13 +58,13 @@ private:
 		    const char *name,
 		    const char *type,
 		    const char *domain,
-		    AVAHI_GCC_UNUSED AvahiLookupResultFlags flags,
+		    AvahiLookupResultFlags flags,
 		    ofxAvahiCoreBrowser* userdata);
 
 	static void resolve_cb(
 		    AvahiSServiceResolver *r,
-		    AVAHI_GCC_UNUSED AvahiIfIndex interface,
-		    AVAHI_GCC_UNUSED AvahiProtocol protocol,
+		    AvahiIfIndex interface,
+		    AvahiProtocol protocol,
 		    AvahiResolverEvent event,
 		    const char *name,
 		    const char *type,
@@ -73,7 +74,9 @@ private:
 		    uint16_t port,
 		    AvahiStringList *txt,
 		    AvahiLookupResultFlags flags,
-		    AVAHI_GCC_UNUSED ofxAvahiCoreBrowser* userdata);
+		    ofxAvahiCoreBrowser* userdata);
+
+	static void server_cb (AvahiServer *s, AvahiServerState state, ofxAvahiCoreBrowser* userdata);
 };
 
 #endif /* OFXAVAHICOREBROWSER_H_ */
